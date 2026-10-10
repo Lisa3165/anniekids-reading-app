@@ -12,7 +12,10 @@ with st.sidebar:
     level = st.selectbox('学生英语等级', ['A2', 'B1'])
     st.write('A2：具体理解、句型支架、60–80 词综合写作。' if level == 'A2' else 'B1：解释与比较、段落支架、100–120 词综合写作。')
     configured = bool(get_api_key())
-    st.success('已检测到 API Key 配置') if configured else st.info('未配置 API Key：可提取文本，暂不能生成分析。')
+    if configured:
+        st.success('已检测到 API Key 配置')
+    else:
+        st.info('未配置 API Key：可提取文本，暂不能生成分析。')
     with st.expander('AI 配置说明'):
         st.code('export LESSON_API_KEY="你的密钥"\nexport LESSON_MODEL="gpt-4o-mini"\nstreamlit run app.py', language='bash')
         st.write('Streamlit Community Cloud：在 Settings → Secrets 中设置 LESSON_API_KEY。也支持 OPENAI_API_KEY。优先读取环境变量，其次读取 Streamlit Secrets；请勿提交密钥到 Git。')

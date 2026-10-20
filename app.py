@@ -1,6 +1,7 @@
 import hashlib
 
 import streamlit as st
+from template_flow import analyze_book, make_framework, make_lessons, export_pack, document_bytes
 
 from studio import StudioError, export_docx, extract_material, generate_lesson, get_api_key, split_chapters
 
@@ -10,7 +11,11 @@ st.caption('面向中国小学高年级英语阅读教师 · 从原文到问题�
 with st.sidebar:
     st.header('备课设置')
     level = st.selectbox('学生英语等级', ['A2', 'B1'])
-    st.write('A2：具体理解、句型支架、60–80 词综合写作。' if level == 'A2' else 'B1：解释与比较、段落支架、100–120 词综合写作。')
+    grade = st.text_input('年级', '六年级')
+    lesson_count = st.number_input('课次数', 1, 30, 3)
+    minutes = st.number_input('每次课分钟数', 20, 240, 80)
+    words = st.text_input('最终写作词数范围', '120–150')
+    st.caption('内置 Life Online 教学结构；主题、章节和活动根据新材料生成。')
     configured = bool(get_api_key())
     if configured:
         st.success('已检测到 API Key 配置')
@@ -22,16 +27,17 @@ with st.sidebar:
         st.write('兼容服务可通过环境变量设置 LESSON_API_BASE_URL（完整 API 基础地址）。')
         st.write('点击生成后，提取文本会发送至所配置的 AI 服务；请仅上传有权使用的材料。')
 st.header('1. 上传阅读材料')
-upload = st.file_uploader('选择 PDF、DOCX 或 TXT（最多 10 MB）', type=['pdf', 'docx', 'txt'])
+upload = st.file_uploader('选择 PDF、DOCX 或 TXT（本地上传上限 2 GB）', type=['pdf', 'docx', 'txt'])
 if upload is None:
     st.info('上传英文阅读材料即可开始。扫描 PDF 请先完成 OCR，本应用不猜测缺失文字。')
     st.stop()
-if upload.size > 10 * 1024 * 1024:
-    st.error('文件超过 10 MB，请拆分后上传。')
-    st.stop()
 data = upload.getvalue()
 try:
-    material = extract_material(upload.name, data)
+    @st.cache_data(show_spinner=False, max_entries=2)
+    def parse_file(name, content):
+        return extract_material(name, content)
+    with st.spinner('正在提取文档文字…'):
+        material = parse_file(upload.name, data)
 except StudioError as exc:
     st.error(str(exc))
     st.stop()
@@ -66,44 +72,55 @@ if manual.strip():
         chapters.append({'title': name, 'text': material['text'][positions[i]:end].strip()})
 for chapter in chapters:
     st.write('• ' + chapter['title'])
-identity = hashlib.sha256((data.hex() + material['title'] + level + manual).encode()).hexdigest()
+settings = {'grade':grade, 'level':level, 'lessons':int(lesson_count), 'minutes':int(minutes), 'words':words}
+identity = hashlib.sha256(data).hexdigest() + str((material['title'], settings, manual))
 if st.session_state.get('lesson_identity') != identity:
-    st.session_state.pop('lesson', None)
+    for name in ('framework', 'pack', 'notes', 'framework_editor', 'pack_framework'):
+        st.session_state.pop(name, None)
     st.session_state['lesson_identity'] = identity
-st.header('3. 生成备课草稿')
-st.caption('所有问题与任务使用英文，教师分析与说明使用中文。每次生成最多 45,000 字符、12 个章节。')
+st.header('3. 生成并确认教学框架')
+st.caption('长文本按段分析后整合；文档越长，耗时和 AI 调用费用越高。分段不会被当成新增章节。')
 consent = st.checkbox('我同意将当前文本发送至所配置的 AI 服务进行分析。')
-if st.button('生成文本分析、章节问题链与输出任务', type='primary', disabled=not configured or not consent):
+if st.button('分析原文并生成教学框架', type='primary', disabled=not configured or not consent):
+    bar = st.progress(0.0)
     try:
-        with st.spinner('正在分析原文并核对引文，请稍候…'):
-            lesson = generate_lesson(material, chapters, level)
-        st.session_state['lesson'] = lesson
+        notes = analyze_book(material, chapters, level, lambda value, label: bar.progress(value, text=label))
+        bar.progress(0.95, text='整合全书教学框架…')
+        framework = make_framework(material, notes, settings)
+        st.session_state['notes'] = notes
+        st.session_state['framework'] = framework
+        st.session_state.pop('framework_editor', None)
+        st.session_state.pop('pack', None)
+        bar.progress(1.0, text='教学框架已生成，请核对后继续')
     except StudioError as exc:
         st.error(str(exc))
-lesson = st.session_state.get('lesson')
-if lesson:
-    st.warning('这是 AI 辅助备课草稿。系统核对引文是否存在，但不能保证推论与答案正确；请结合原文审核后使用。')
-    tabs = st.tabs(['What–Why–How', '章节问题链与任务', '综合写作与导出'])
-    with tabs[0]:
-        for dimension in ('What', 'Why', 'How'):
-            st.subheader(dimension)
-            for point in lesson['analysis'][dimension]:
-                st.write(point['point'])
-                st.text('原文依据：' + point['evidence'])
-    with tabs[1]:
-        for chapter in lesson['chapters']:
-            with st.expander(chapter['title'], expanded=True):
-                st.subheader('Big Question: ' + chapter['big_question'])
-                for i, question in enumerate(chapter['questions'], 1):
-                    st.write(f"{i}. [{question['dimension']}] {question['question']}")
-                    st.write('Reference answer: ' + question['answer'])
-                    st.text('Text evidence: ' + question['evidence'])
-                st.subheader('Student output task')
-                st.write(chapter['task'])
-                st.write('教师说明：' + chapter['teacher_notes'])
-    with tabs[2]:
-        st.subheader('Final writing task')
-        st.write(lesson['final_task'])
-        st.subheader('教师备课说明')
-        st.write(lesson['teacher_notes'])
-        st.download_button('下载可编辑 Word 备课文档', export_docx(material, lesson, level), file_name=f'Anniekids_Lesson_{level}.docx', mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+if st.session_state.get('framework'):
+    framework = st.text_area('可编辑教学框架（核对章节安排、全书核心问题和最终任务）', value=st.session_state['framework'], height=450, key='framework_editor')
+    st.download_button('下载教学框架 Word', document_bytes(material['title'], framework), file_name='教学框架.docx')
+    with st.expander('查看逐段分析与已核对的原文依据'):
+        st.json(st.session_state.get('notes', []))
+    st.header('4. 生成教师教案、学生作业纸和参考答案')
+    if st.button('按当前框架生成配套材料', disabled=not consent or not configured or not framework.strip()):
+        st.session_state.pop('pack', None)
+        bar = st.progress(0.0)
+        try:
+            st.session_state['pack'] = make_lessons(framework, settings, lambda v, t: bar.progress(v, text=t))
+            st.session_state['pack_framework'] = framework
+        except StudioError as exc:
+            st.error(str(exc))
+    pack = st.session_state.get('pack')
+    if pack and st.session_state.get('pack_framework') != framework:
+        st.info('教学框架已修改，请重新生成配套材料。')
+        pack = None
+    if pack:
+        st.warning('请审核后使用：原文分析中的引文已核对；整合后的教案、作业纸和答案仍需人工核查。Word 为可编辑文字版，表格样式可能需要调整。')
+        for item in pack:
+            with st.expander(item['title'], expanded=True):
+                tabs = st.tabs(['教师教案', '学生作业纸', '教师参考答案'])
+                with tabs[0]:
+                    for activity in item['activities']:
+                        st.write(f"{activity['minutes']} 分钟：{activity['activity']}")
+                    st.markdown(item['teacher'])
+                with tabs[1]: st.markdown(item['worksheet'])
+                with tabs[2]: st.markdown(item['answers'])
+        st.download_button('下载全套 Word（ZIP）', export_pack(framework, pack), file_name='Anniekids教案与作业纸.zip', mime='application/zip')

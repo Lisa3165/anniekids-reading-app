@@ -1,0 +1,6 @@
+[server]
+address = "127.0.0.1"
+maxUploadSize = 2048
+maxMessageSize = 2048
+[browser]
+gatherUsageStats = false

@@ -1,68 +1,54 @@
-# Anniekids English Reading Lesson Studio
+# Anniekids 本地阅读备课工作室
 
-面向中国小学高年级英语阅读教师的 Streamlit 备课应用。
+## 开始使用
 
-## 安装与运行
-
-需要 Python 3.10+。
-
-```bash
-cd /workspace/Anniekids-teaching-lab  # 本地请进入实际项目目录
-python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-python -m pip install -r requirements.txt
-streamlit run app.py --server.address 0.0.0.0 --server.port 8501
-```
-
-本地浏览器打开 `http://localhost:8501`。云环境使用平台端口转发功能访问 8501（如平台提供）；也可将仓库下载到本地运行。首次启动无需 API Key，即可提取和查看文本。
-
-## AI 配置
-
-启动前设置环境变量（Windows PowerShell 使用 `$env:LESSON_API_KEY="..."`）：
-
-```bash
-export LESSON_API_KEY="你的密钥"
-export LESSON_MODEL="gpt-4o-mini"  # 可选，默认值如上
-# export LESSON_API_BASE_URL="https://你的兼容服务/v1"  # 可选
-streamlit run app.py
-```
-
-也可使用 `OPENAI_API_KEY`。读取顺序为：环境变量 `LESSON_API_KEY` → 环境变量 `OPENAI_API_KEY` → Streamlit Secrets `LESSON_API_KEY` → Streamlit Secrets `OPENAI_API_KEY`；空白值会跳过。采用 OpenAI Chat Completions JSON 模式；兼容服务和模型须支持 JSON object 输出及相应输出长度。密钥从环境变量或 Streamlit Secrets 读取，不写入代码、不提交 Git。不配置密钥时，界面明确说明无法生成 AI 分析，绝不显示模拟分析。默认外部服务为 OpenAI；需要访问 api.openai.com。自定义服务须允许其实际域名。费用与可用模型由账号决定。
-
-### Streamlit Community Cloud 密钥设置
-
-在应用 **Settings → Secrets** 中填写以下 TOML（示例仅为占位，不是真实密钥）：
+1. 安装 Python 3.11 或 3.12（Windows 安装时勾选 Add Python to PATH）。
+2. 将整个 ZIP 解压到一个文件夹，不能直接在压缩包内启动。
+3. 在 `.streamlit` 文件夹中新建 `secrets.toml`（注意不要变成 .txt），内容如下：
 
 ```toml
-LESSON_API_KEY = "你的密钥"
+LESSON_API_KEY = "填入你自己的API密钥"
 ```
 
-保存后按平台提示重启应用。不要将真实密钥写进仓库文件；本地如使用 `.streamlit/secrets.toml`，该文件已被 `.gitignore` 排除。未配置密钥或不存在 Secrets 文件时，网站仍可启动，允许上传与查看文本，AI 生成按钮禁用并说明原因。页面只显示是否检测到配置，不展示密钥内容。`LESSON_MODEL` 和 `LESSON_API_BASE_URL` 仍从环境变量读取。
+4. Windows 双击 `启动Windows.bat`；Mac 双击 `启动Mac.command`。首次会联网安装依赖，请等待。Mac 如提示权限不足，可在终端运行 `chmod +x 启动Mac.command` 再运行 `./启动Mac.command`。若系统阻止打开，可直接按下方命令启动。
+5. 浏览器通常自动打开 http://127.0.0.1:8501；如果没有，手动打开该地址。使用期间保留终端窗口；结束时在终端按 Ctrl+C。
 
-公开应用目前没有登录和额度限制；部署为公众可访问服务前，请考虑访问控制及模型费用。此项兼容性修改不等于已完成部署。
+也可手工启动：
+
+```bash
+python -m pip install -r requirements.txt
+python -m streamlit run app.py
+```
+
+Mac 手动命令可能需使用 python3。
+
+密钥无需发送给任何人，不要将 secrets.toml 上传 GitHub。既有 LESSON_API_KEY / OPENAI_API_KEY 环境变量仍然优先。兼容接口地址通过 LESSON_API_BASE_URL 环境变量设置，模型通过 LESSON_MODEL 设置（默认 gpt-4o-mini）。请使用支持 JSON 输出的兼容模型。
+
+## 本次功能
+
+- 仅监听本机 127.0.0.1，不需要 Streamlit Cloud 或公开部署。
+- 删除应用内 10 MB 限制，Streamlit 本地上传上限设置为 2048 MB（2 GB）。实际解析能力取决于内存、文件结构；这不代表承诺所有 2 GB 文件都能处理。可在 `.streamlit/config.toml` 修改上限。
+- PDF、DOCX、TXT；扫描 PDF 仍需先 OCR。上传不代表自动识别扫描图片。
+- 内置所提供 Life Online 教案的教学结构：What–Why–How、全书核心问题、章节阅读方向、递进问题链、读后任务、表达支架、最终写作。
+- 可设置年级、A2/B1、课次数、每次时长、最终写作词数。
+- 全文逐段分析并核对引文，分段不作为新增的实际章节。原有单次 45,000 字符/12章限制保留在底层调用保护中；新界面通过分段请求处理长文，不再拒绝整本文档。
+- 先生成可编辑教学框架，再按确认的框架逐课生成教师教案、英文学生作业纸、参考答案。教学环节总时长会自动校验。
+- 下载三份可编辑 Word 的 ZIP。导出以文字段落为主；Markdown 表格可能显示为文字，可在 Word 中调整排版。
 
 ## 使用流程
 
-1. 上传 PDF、DOCX 或 TXT，核对标题、全文和英文单词数。
-2. 选择 CEFR A2 或 B1。自动识别章节标题；必要时填写原文中唯一出现的完整章节标题，按原文顺序排列。章节前文字保留为单独范围；未识别章节时仅处理全文。
-3. 勾选文本发送授权并生成：What–Why–How 分析、每章 Big Question、至少六个问题（每个维度至少两个）、答案及引文、阶段任务和综合写作任务。
-4. 核对 AI 草稿后下载 Word。导出包含标题、层级和可编辑问题表格。
+上传新教材 → 核对标题与章节 → 设置教学条件 → 同意调用 AI → 生成并修改教学框架 → 生成全套材料 → 下载。
 
-教师界面、分析与备课说明为中文；学生问题、参考答案、Big Question 和输出任务为英文。A2 强调具体理解和句型支架，综合写作 60–80 词；B1 加入解释、比较与段落支架，综合写作 100–120 词。
+同一文档的解析结果会在当前应用进程内缓存，关闭程序即清除；生成结果保存在浏览器对应的当前会话中，刷新/关闭会话可能丢失，请及时下载。框架修改后，旧的配套材料停止显示，需重新生成。
 
-## 证据与第一版限制
+本地运行仍需联网调用你配置的 AI 服务；长书会多次调用，耗时与费用增加。压缩整合可能丢失部分细节，可展开查看完整的逐段分析。原始分析中的引文做了文字匹配校验，后续整合结果、答案与来源仍需教师复核；目前没有对新生成的每道作业题做自动事实验证。原文中没有可核对的页码时不编造页码。PDF 章节定位沿用原文标题，不等于书籍印刷页码。
 
-- 不提供 OCR：PDF 任意页面无法提取文字时拒绝分析，并提示先 OCR；加密、损坏、空文件给出错误提示。PDF 提取顺序与准确性仍需人工核对。
-- TXT 支持 UTF-8 与 GB18030；DOCX 支持正文段落和表格，不提取图片、页眉、页脚。
-- 文件限 10 MB；AI 每次限 45,000 字符、12 个章节。长书请拆分上传，不会静默截断。
-- 模型以全部选定文本为依据，返回结构化 JSON；系统拒绝缺字段、章节变更、缺维度问题以及不在对应原文中的引文。
-- 引文匹配只能证明引用存在，不能证明解释正确。写作目的等推论要求模型标明推测；教师须审核事实、推论、语言等级、英文输出和任务递进。不承诺 AI 永不产生错误。
-- 点击生成才发送文本到配置的 AI 服务。不做持久化上传存储；会话中的提取文本及结果会保存在进程内存中。无用户账号和数据库。
+本版不是独立安装程序，需要本机 Python。没有进行公开发布，也不修改原有线上 APP。
 
-## 基本测试
+## 开发验证
 
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-测试不需要 API Key，不访问付费模型，覆盖文件提取、空/损坏输入、PDF 无文字提示、章节识别、引文校验、API 缺失提示和 DOCX 导出。真实模型端到端生成需自行配置有效密钥后验证。
+测试使用模拟 AI 响应，不使用真实密钥。真实模型质量、费用和用户电脑上的启动仍需实际验证。

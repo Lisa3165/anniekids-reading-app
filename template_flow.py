@@ -3,7 +3,7 @@ import io
 import json
 import os
 from docx import Document
-from studio import StudioError, get_api_key, generate_lesson
+from studio import StudioError, get_api_key, generate_lesson, api_error_message
 
 
 def analyze_book(material, chapters, level, progress):
@@ -27,14 +27,16 @@ def request_json(instruction, payload):
         client = OpenAI(api_key=get_api_key(), base_url=os.getenv('LESSON_API_BASE_URL') or None, timeout=180, max_retries=1)
         response = client.chat.completions.create(model=os.getenv('LESSON_MODEL', 'gpt-4o-mini'),
             messages=[{'role':'system', 'content': instruction}, {'role':'user', 'content':json.dumps(payload, ensure_ascii=False)}],
-            response_format={'type':'json_object'}, temperature=0.2, max_tokens=14000)
+            response_format={'type':'json_object'}, temperature=0.2, max_tokens=8192)
         if response.choices[0].finish_reason != 'stop':
             raise StudioError('输出不完整，请重试或缩小本次课的教学范围。')
         return json.loads(response.choices[0].message.content or '')
     except StudioError:
         raise
-    except (OpenAIError, ValueError, IndexError, AttributeError) as exc:
-        raise StudioError('生成失败，请检查 AI 配置、网络和额度后重试。') from exc
+    except OpenAIError as exc:
+        raise StudioError(api_error_message(exc)) from exc
+    except (ValueError, IndexError, AttributeError) as exc:
+        raise StudioError('模型未返回有效 JSON，请重试。') from exc
 
 
 RULES = '''You design English reading lessons for Chinese teachers, following the pedagogical structure of the Life Online example, never reusing its book-specific facts.

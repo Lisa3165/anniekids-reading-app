@@ -13,6 +13,28 @@ class StudioError(ValueError):
     pass
 
 
+def api_error_message(exc):
+    """Explain API errors without exposing response bodies or credentials."""
+    status = getattr(exc, 'status_code', None)
+    if status == 400:
+        return 'AI 请求参数被拒绝（HTTP 400）。请确认模型支持 JSON 输出；本版输出上限已调整为 8192 tokens。'
+    if status == 401:
+        return 'AI 身份验证失败（HTTP 401）。请确认密钥与服务地址属于同一平台，且密钥有效。'
+    if status == 402:
+        return 'AI 账户余额不足（HTTP 402），请检查当前密钥所属账户的 API 余额。'
+    if status == 403:
+        return 'AI 服务拒绝访问（HTTP 403），请检查账户和模型访问权限。'
+    if status == 404:
+        return 'AI 地址或模型不存在（HTTP 404），请核对服务地址及模型名称。'
+    if status == 429:
+        return 'AI 调用受限（HTTP 429），可能是请求频率或额度限制，请检查账户后稍后重试。'
+    if status is not None:
+        return f'AI 服务返回错误（HTTP {status}），请稍后重试。'
+    if 'Timeout' in type(exc).__name__:
+        return 'AI 请求超时，请稍后重试或缩小文本范围。'
+    return '无法连接 AI 服务，请检查本机网络、代理和服务地址。'
+
+
 def get_api_key():
     """Resolve a key without logging it; absent Secrets are normal locally."""
     for name in ('LESSON_API_KEY', 'OPENAI_API_KEY'):
@@ -179,14 +201,14 @@ def generate_lesson(material, chapters, level):
         response = client.chat.completions.create(
             model=os.getenv('LESSON_MODEL', 'gpt-4o-mini'),
             messages=[{'role': 'system', 'content': SYSTEM}, {'role': 'user', 'content': json.dumps({'level': level, 'title': material['title'], 'chapters': chapters}, ensure_ascii=False)}],
-            response_format={'type': 'json_object'}, temperature=0.2, max_tokens=16000)
+            response_format={'type': 'json_object'}, temperature=0.2, max_tokens=8192)
         if response.choices[0].finish_reason != 'stop':
             raise StudioError('模型输出未完整结束，请减少章节或文本长度后重试。')
         result = json.loads(response.choices[0].message.content or '')
     except StudioError:
         raise
     except OpenAIError as exc:
-        raise StudioError('AI 请求失败，请检查 API Key、模型名称、服务地址、网络或额度。') from exc
+        raise StudioError(api_error_message(exc)) from exc
     except (ValueError, IndexError, AttributeError) as exc:
         raise StudioError('模型没有返回可解析的 JSON，请重试。') from exc
     return validate_result(result, chapters, material['text'])

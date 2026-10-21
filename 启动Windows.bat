@@ -1,4 +1,6 @@
 @echo off
+set "LESSON_API_BASE_URL=https://api.deepseek.com"
+set "LESSON_MODEL=deepseek-chat"
 cd /d "%~dp0"
 where py >nul 2>nul
 if errorlevel 1 (

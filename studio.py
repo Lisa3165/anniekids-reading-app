@@ -13,6 +13,11 @@ class StudioError(ValueError):
     pass
 
 
+class EvidenceError(StudioError):
+    """An exact quotation failed source verification."""
+    pass
+
+
 def api_error_message(exc):
     """Explain API errors without exposing response bodies or credentials."""
     status = getattr(exc, 'status_code', None)
@@ -149,7 +154,7 @@ def validate_result(result, chapters, source):
     def evidence(value, text):
         string(value)
         if _normalized(value) not in _normalized(text):
-            raise StudioError('模型提供的引文不在对应原文中，结果已拒绝。请重试。')
+            raise EvidenceError('模型提供的引文不在对应原文中，结果已拒绝。请重试。')
     if not isinstance(result, dict) or not isinstance(result.get('analysis'), dict):
         raise StudioError('模型分析格式不正确，请重试。')
     for dimension in ('What', 'Why', 'How'):
@@ -198,20 +203,28 @@ def generate_lesson(material, chapters, level):
         raise StudioError('第一版每次支持最多 45,000 字符、12 个章节，请拆分材料。')
     try:
         client = OpenAI(api_key=key, base_url=os.getenv('LESSON_API_BASE_URL') or None, timeout=120, max_retries=1)
-        response = client.chat.completions.create(
-            model=os.getenv('LESSON_MODEL', 'gpt-4o-mini'),
-            messages=[{'role': 'system', 'content': SYSTEM}, {'role': 'user', 'content': json.dumps({'level': level, 'title': material['title'], 'chapters': chapters}, ensure_ascii=False)}],
-            response_format={'type': 'json_object'}, temperature=0.2, max_tokens=8192)
-        if response.choices[0].finish_reason != 'stop':
-            raise StudioError('模型输出未完整结束，请减少章节或文本长度后重试。')
-        result = json.loads(response.choices[0].message.content or '')
+        messages = [{'role': 'system', 'content': SYSTEM + '\nEvidence fields must copy a short contiguous passage exactly, including punctuation and spelling. Never paraphrase, translate, correct OCR or join distant phrases in an evidence field.'}, {'role': 'user', 'content': json.dumps({'level': level, 'title': material['title'], 'chapters': chapters}, ensure_ascii=False)}]
+        for attempt in range(3):
+            response = client.chat.completions.create(
+                model=os.getenv('LESSON_MODEL', 'gpt-4o-mini'), messages=messages,
+                response_format={'type': 'json_object'}, temperature=0.2, max_tokens=8192)
+            if response.choices[0].finish_reason != 'stop':
+                raise StudioError('模型输出未完整结束，请减少章节或文本长度后重试。')
+            result = json.loads(response.choices[0].message.content or '')
+            try:
+                return validate_result(result, chapters, material['text'])
+            except EvidenceError:
+                if attempt == 2:
+                    raise EvidenceError('该段引文经过 3 次生成仍未通过原文核对。已保留此前完成的段落；可再次点击继续，或核查该段提取文字。')
+                messages = messages[:2] + [
+                    {'role': 'assistant', 'content': json.dumps(result, ensure_ascii=False)},
+                    {'role': 'user', 'content': 'Quotation validation failed. Return the complete corrected JSON. Check EVERY evidence field against its supplied chapter (analysis evidence against the supplied full text). Copy only short contiguous exact passages. No paraphrases, ellipses, spelling corrections, or quotes from other chapters. Adjust the question and answer if needed so a real passage supports them.'}]
     except StudioError:
         raise
     except OpenAIError as exc:
         raise StudioError(api_error_message(exc)) from exc
     except (ValueError, IndexError, AttributeError) as exc:
         raise StudioError('模型没有返回可解析的 JSON，请重试。') from exc
-    return validate_result(result, chapters, material['text'])
 
 
 def export_docx(material, result, level):

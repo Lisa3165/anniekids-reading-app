@@ -18,6 +18,28 @@ class EvidenceError(StudioError):
     pass
 
 
+class JSONResponseError(StudioError):
+    pass
+
+
+def parse_json_object(content):
+    """Accept a JSON object, optionally inside one Markdown code fence."""
+    if not isinstance(content, str):
+        raise JSONResponseError('模型返回了空内容或错误格式。')
+    text = content.strip()
+    if text.startswith('```'):
+        match = re.fullmatch(r'```(?:json)?\s*\n?(.*?)\n?```', text, re.S | re.I)
+        if match:
+            text = match.group(1).strip()
+    try:
+        result = json.loads(text)
+    except (ValueError, TypeError) as exc:
+        raise JSONResponseError('模型未返回有效 JSON。') from exc
+    if not isinstance(result, dict):
+        raise JSONResponseError('模型返回的 JSON 不是对象。')
+    return result
+
+
 def api_error_message(exc):
     """Explain API errors without exposing response bodies or credentials."""
     status = getattr(exc, 'status_code', None)
@@ -209,16 +231,23 @@ def generate_lesson(material, chapters, level):
                 model=os.getenv('LESSON_MODEL', 'gpt-4o-mini'), messages=messages,
                 response_format={'type': 'json_object'}, temperature=0.2, max_tokens=8192)
             if response.choices[0].finish_reason != 'stop':
-                raise StudioError('模型输出未完整结束，请减少章节或文本长度后重试。')
-            result = json.loads(response.choices[0].message.content or '')
-            try:
-                return validate_result(result, chapters, material['text'])
-            except EvidenceError:
                 if attempt == 2:
-                    raise EvidenceError('该段引文经过 3 次生成仍未通过原文核对。已保留此前完成的段落；可再次点击继续，或核查该段提取文字。')
+                    raise StudioError('模型输出未完整结束，自动重试后仍不完整。请减少本段文本长度。')
+                messages = messages[:2] + [{'role': 'user', 'content': 'Previous output was truncated. Return the complete JSON more concisely: one short analysis entry per dimension, exactly six concise questions per chapter, short exact quotes, compact scaffolds and tasks. Preserve every required field.'}]
+                continue
+            raw = response.choices[0].message.content
+            try:
+                result = parse_json_object(raw)
+                return validate_result(result, chapters, material['text'])
+            except StudioError as exc:
+                if attempt == 2:
+                    if isinstance(exc, EvidenceError):
+                        raise EvidenceError('该段引文经过 3 次生成仍未通过原文核对。已保留此前完成的段落；可再次点击继续，或核查该段提取文字。') from exc
+                    raise StudioError('该段格式经过 3 次生成仍不完整。已保留此前完成的段落，可再次点击继续。') from exc
+                feedback = ('Quotation validation failed. Return the complete corrected JSON. Check EVERY evidence field against its supplied chapter (analysis evidence against the supplied full text). Copy only short contiguous exact passages. No paraphrases, ellipses, spelling corrections, or quotes from other chapters. Adjust the question and answer if needed so a real passage supports them.' if isinstance(exc, EvidenceError) else 'JSON syntax or schema validation failed. Return ONLY one complete valid JSON object matching ALL fields in the system schema. No Markdown fences or commentary. Escape double quotes and newlines within strings. Include all chapters and required question dimensions. Keep exact quotations and do not invent facts.')
                 messages = messages[:2] + [
-                    {'role': 'assistant', 'content': json.dumps(result, ensure_ascii=False)},
-                    {'role': 'user', 'content': 'Quotation validation failed. Return the complete corrected JSON. Check EVERY evidence field against its supplied chapter (analysis evidence against the supplied full text). Copy only short contiguous exact passages. No paraphrases, ellipses, spelling corrections, or quotes from other chapters. Adjust the question and answer if needed so a real passage supports them.'}]
+                    {'role': 'assistant', 'content': (raw or '')[:16000]},
+                    {'role': 'user', 'content': feedback}]
     except StudioError:
         raise
     except OpenAIError as exc:

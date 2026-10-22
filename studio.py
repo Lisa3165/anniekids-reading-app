@@ -40,11 +40,39 @@ def parse_json_object(content):
     return result
 
 
+def safe_api_detail(exc):
+    """Show only the service's message field, with credential values redacted."""
+    body = getattr(exc, 'body', None)
+    if not isinstance(body, dict):
+        return ''
+    error = body.get('error', body)
+    if not isinstance(error, dict) or not isinstance(error.get('message'), str):
+        return ''
+    detail = error['message']
+    keys = [os.getenv('LESSON_API_KEY'), os.getenv('OPENAI_API_KEY')]
+    try:
+        keys.append(get_api_key())
+    except Exception:
+        pass
+    request = getattr(exc, 'request', None)
+    headers = getattr(request, 'headers', {})
+    auth = headers.get('Authorization', '')
+    if auth.lower().startswith('bearer '):
+        keys.append(auth[7:])
+    for key in keys:
+        if isinstance(key, str) and key.strip():
+            detail = detail.replace(key.strip(), '[密钥已隐藏]')
+    detail = re.sub(r'(?i)sk-[a-z0-9_-]+', '[密钥已隐藏]', detail)
+    detail = re.sub(r'(?i)bearer\s+[^\s,;\"\']+', 'Bearer [已隐藏]', detail)
+    return ' '.join(detail.split())[:600]
+
+
 def api_error_message(exc):
-    """Explain API errors without exposing response bodies or credentials."""
+    """Explain errors; never display credentials, headers or a complete response."""
     status = getattr(exc, 'status_code', None)
     if status == 400:
-        return 'AI 请求参数被拒绝（HTTP 400）。请确认模型支持 JSON 输出；本版输出上限已调整为 8192 tokens。'
+        detail = safe_api_detail(exc)
+        return 'AI 请求参数被拒绝（HTTP 400）。' + ('接口说明：' + detail if detail else '接口未提供详细说明。请核对服务地址、模型与请求参数。')
     if status == 401:
         return 'AI 身份验证失败（HTTP 401）。请确认密钥与服务地址属于同一平台，且密钥有效。'
     if status == 402:

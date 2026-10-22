@@ -2,11 +2,13 @@
 import io
 import json
 import os
+import hashlib
 from docx import Document
 from studio import StudioError, get_api_key, generate_lesson, api_error_message
 
 
-def analyze_book(material, chapters, level, progress):
+def analyze_book(material, chapters, level, progress, checkpoint=None):
+    checkpoint = checkpoint if checkpoint is not None else {}
     units = []
     for chapter in chapters:
         text = chapter['text']
@@ -15,8 +17,18 @@ def analyze_book(material, chapters, level, progress):
             units.append({'title': chapter['title'] + (f' · 文本段 {start // 18000 + 1}' if len(text) > 18000 else ''), 'text': text[start:start+18000]})
     notes = []
     for i, unit in enumerate(units):
+        identity = json.dumps([material['title'], unit, level, os.getenv('LESSON_MODEL', 'gpt-4o-mini'), os.getenv('LESSON_API_BASE_URL', '')], ensure_ascii=False)
+        cache_key = hashlib.sha256(identity.encode()).hexdigest()
+        if cache_key in checkpoint:
+            progress(i / (len(units) + 1), f'复用已完成分析 {i+1}/{len(units)}：{unit["title"]}')
+            notes.append(checkpoint[cache_key])
+            continue
         progress(i / (len(units) + 1), f'原文分析 {i+1}/{len(units)}：{unit["title"]}')
-        result = generate_lesson({'title': material['title'], 'text': unit['text']}, [unit], level)
+        try:
+            result = generate_lesson({'title': material['title'], 'text': unit['text']}, [unit], level)
+        except StudioError as exc:
+            raise StudioError(f'第 {i+1}/{len(units)} 段（{unit["title"]}）：{exc}') from exc
+        checkpoint[cache_key] = result
         notes.append(result)
     return notes
 

@@ -37,6 +37,9 @@ def request_json(instruction, payload):
     from openai import OpenAI, OpenAIError
     try:
         client = OpenAI(api_key=get_api_key(), base_url=os.getenv('LESSON_API_BASE_URL') or None, timeout=180, max_retries=1)
+        # DeepSeek requires the literal word json in the prompt for JSON mode.
+        # Enforce this centrally for summaries, frameworks, lessons and retries.
+        instruction = instruction + '\nReturn only a complete valid json object. Do not wrap it in Markdown or add commentary.'
         messages = [{'role':'system', 'content': instruction}, {'role':'user', 'content':json.dumps(payload, ensure_ascii=False)}]
         for attempt in range(3):
             response = client.chat.completions.create(model=os.getenv('LESSON_MODEL', 'gpt-4o-mini'),

@@ -4,7 +4,7 @@ import json
 import os
 import hashlib
 from docx import Document
-from studio import StudioError, get_api_key, generate_lesson, api_error_message
+from studio import StudioError, JSONResponseError, get_api_key, generate_lesson, api_error_message, parse_json_object
 
 
 def analyze_book(material, chapters, level, progress, checkpoint=None):
@@ -37,12 +37,21 @@ def request_json(instruction, payload):
     from openai import OpenAI, OpenAIError
     try:
         client = OpenAI(api_key=get_api_key(), base_url=os.getenv('LESSON_API_BASE_URL') or None, timeout=180, max_retries=1)
-        response = client.chat.completions.create(model=os.getenv('LESSON_MODEL', 'gpt-4o-mini'),
-            messages=[{'role':'system', 'content': instruction}, {'role':'user', 'content':json.dumps(payload, ensure_ascii=False)}],
-            response_format={'type':'json_object'}, temperature=0.2, max_tokens=8192)
-        if response.choices[0].finish_reason != 'stop':
-            raise StudioError('输出不完整，请重试或缩小本次课的教学范围。')
-        return json.loads(response.choices[0].message.content or '')
+        messages = [{'role':'system', 'content': instruction}, {'role':'user', 'content':json.dumps(payload, ensure_ascii=False)}]
+        for attempt in range(3):
+            response = client.chat.completions.create(model=os.getenv('LESSON_MODEL', 'gpt-4o-mini'),
+                messages=messages, response_format={'type':'json_object'}, temperature=0.2, max_tokens=8192)
+            if response.choices[0].finish_reason != 'stop':
+                if attempt == 2:
+                    raise StudioError('输出自动重试后仍不完整，请缩小本次课的教学范围。')
+                messages = messages[:2] + [{'role':'user', 'content':'Previous output was truncated. Return a shorter but complete JSON object with every required field. Keep tasks, answers and timing consistent.'}]
+                continue
+            try:
+                return parse_json_object(response.choices[0].message.content)
+            except JSONResponseError as exc:
+                if attempt == 2:
+                    raise StudioError('经过 3 次生成仍未返回有效 JSON，请再次尝试。') from exc
+                messages = messages[:2] + [{'role':'user', 'content':'Previous output was not valid JSON. Return ONLY one complete valid JSON object, with required fields and properly escaped strings. No explanation or Markdown.'}]
     except StudioError:
         raise
     except OpenAIError as exc:

@@ -75,7 +75,7 @@ for chapter in chapters:
 settings = {'grade':grade, 'level':level, 'lessons':int(lesson_count), 'minutes':int(minutes), 'words':words}
 identity = hashlib.sha256(data).hexdigest() + str((material['title'], settings, manual))
 if st.session_state.get('lesson_identity') != identity:
-    for name in ('framework', 'pack', 'notes', 'framework_editor', 'pack_framework'):
+    for name in ('framework', 'pack', 'notes', 'framework_editor', 'pack_framework', 'analysis_checkpoint'):
         st.session_state.pop(name, None)
     st.session_state['lesson_identity'] = identity
 st.header('3. 生成并确认教学框架')
@@ -84,7 +84,7 @@ consent = st.checkbox('我同意将当前文本发送至所配置的 AI 服务�
 if st.button('分析原文并生成教学框架', type='primary', disabled=not configured or not consent):
     bar = st.progress(0.0)
     try:
-        notes = analyze_book(material, chapters, level, lambda value, label: bar.progress(value, text=label))
+        notes = analyze_book(material, chapters, level, lambda value, label: bar.progress(value, text=label), st.session_state.setdefault('analysis_checkpoint', {}))
         bar.progress(0.95, text='整合全书教学框架…')
         framework = make_framework(material, notes, settings)
         st.session_state['notes'] = notes
